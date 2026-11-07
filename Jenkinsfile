@@ -2,30 +2,20 @@ pipeline {
     agent { label "Jenkins-Agent" }
 
     parameters {
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag to deploy (leave empty to use the newest tag on Docker Hub)')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Docker image tag to deploy')
     }
 
     environment {
-        APP_NAME    = "register-app-pipeline"
-        DOCKER_REPO = "sharatheralagi/register-app-pipeline"
+        APP_NAME = "register-app-pipeline"
     }
 
     stages {
-        stage("Resolve Image Tag") {
+        stage("Validate Parameters") {
             steps {
                 script {
-                    def tag = params.IMAGE_TAG?.trim()
-                    if (!tag) {
-                        tag = sh(returnStdout: true, script: '''
-                            curl -sS -f -m 30 "https://hub.docker.com/v2/repositories/${DOCKER_REPO}/tags?page_size=100&ordering=last_updated" \
-                            | python3 -c "import sys,json,re; r=json.load(sys.stdin)['results']; print(next(t['name'] for t in r if re.fullmatch(r'1\\.0\\.0-\\d+', t['name'])))"
-                        ''').trim()
+                    if (!params.IMAGE_TAG?.trim()) {
+                        error("IMAGE_TAG is empty. Trigger this job with IMAGE_TAG=<tag>.")
                     }
-                    if (!tag) {
-                        error("Could not determine an image tag.")
-                    }
-                    env.DEPLOY_TAG = tag
-                    echo "Deploying tag: ${env.DEPLOY_TAG}"
                 }
             }
         }
@@ -49,7 +39,7 @@ pipeline {
                 sh """
                    echo "--- Before ---"
                    cat deployment.yaml
-                   sed -i 's|${APP_NAME}:.*|${APP_NAME}:${env.DEPLOY_TAG}|g' deployment.yaml
+                   sed -i 's|${APP_NAME}:.*|${APP_NAME}:${params.IMAGE_TAG}|g' deployment.yaml
                    echo "--- After ---"
                    cat deployment.yaml
                 """
@@ -63,8 +53,7 @@ pipeline {
                        git config user.name "sharatheralagi007"
                        git config user.email "sharatheralagi@gmail.com"
                        git add deployment.yaml
-                       git diff --cached --quiet || git commit -m "Updated image tag to ${DEPLOY_TAG}"
-                       git pull --rebase origin main
+                       git diff --cached --quiet || git commit -m "Updated image tag to ${IMAGE_TAG}"
                        git push origin HEAD:main
                     '''
                 }
@@ -74,7 +63,7 @@ pipeline {
 
     post {
         success {
-            echo "Deployment manifest updated to ${env.DEPLOY_TAG}. Argo CD will sync it."
+            echo "Deployment manifest updated to ${params.IMAGE_TAG}. Argo CD will sync it."
         }
         failure {
             echo "CD pipeline failed. Check the stage logs above."
